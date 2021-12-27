@@ -12,6 +12,32 @@
   value)
 
 
+(defn make-fake-file
+  "Create a fake file from bytes."
+  [bytes]
+
+  (var cursor 0)
+  (table :read (fn [n]
+                 (do
+                   (def result (string/slice bytes cursor (+ cursor n)))
+                   (+= cursor n)
+                   result))))
+
+(defn read-fake-file
+  [fake-file n]
+  (-> fake-file
+      (|($ :read))
+      (|($ n))))
+
+(+= 3 4)
+
+(-> "\x00\x01\x02\x99"
+    (make-fake-file)
+    (|($ :read))
+    (|($ 1))
+    )
+
+
 (defn read-dson
   "Read a Darkest Dungeon json file."
   [path]
@@ -137,13 +163,13 @@
   (defn infere-field
     [meta-1-blocks
      field]
-    (let [index (get field :index)
-          meta-1-entry-idx (get field :meta-1-entry-idx)
-          meta-1-block (meta-1-blocks meta-1-entry-idx)
+    (let [index               (get field :index)
+          meta-1-entry-idx    (get field :meta-1-entry-idx)
+          meta-1-block        (meta-1-blocks meta-1-entry-idx)
           num-direct-children (get meta-1-block :num-direct-children)
-          num-all-children (get meta-1-block :num-all-children)
-          meta-2-entry-idx (get meta-1-block :meta-2-entry-idx)
-          is-object (= index meta-2-entry-idx)]
+          num-all-children    (get meta-1-block :num-all-children)
+          meta-2-entry-idx    (get meta-1-block :meta-2-entry-idx)
+          is-object           (= index meta-2-entry-idx)]
       (put field
            :inferences (table :is-object is-object
                               :num-direct-children (if is-object
@@ -174,8 +200,8 @@
     [meta-1-blocks
      fields]
 
-    (let [objects-stack @[@{:field-index -1
-                            :field-name :null
+    (let [objects-stack @[@{:field-index         -1
+                            :field-name          :null
                             :num-remain-children 1}]]
 
       (defn decrease-last-num-remain-children
@@ -205,12 +231,12 @@
         (remove-fulfilled-object)
         (if (and (get-in field [:inferences :is-object])
                  (pos? (get-in field [:inferences :num-direct-children])))
-          (let [field-index (get field :index)
-                field-name (get field :name)
+          (let [field-index         (get field :index)
+                field-name          (get field :name)
                 num-remain-children (get-in field [:inferences :num-direct-children])
-                new-object @{:field-index field-index
-                             :field-name field-name
-                             :num-remain-children num-remain-children}]
+                new-object          @{:field-index field-index
+                                      :field-name field-name
+                                      :num-remain-children num-remain-children}]
             (array/push objects-stack new-object)))))
 
     (defn infere-hierarchy-path
@@ -222,7 +248,7 @@
               parent-field-index (get-in field [:inferences :parent-field-index])
               parent-field (get fields parent-field-index)]
           (infere-hierarchy-path parent-field
-                                     (array/push current-names field-name)))))
+                                 (array/push current-names field-name)))))
 
     (->> fields
          (map |(put-in $
@@ -447,18 +473,25 @@
 (def path-5 (string/join [base-path "profile_1" "persist.game.json"] "/"))
 (def path-6 (string/join [base-path "profile_1" "persist.narration.json"] "/"))
 
-# (-> path-1
-#     read-dson
-#     (strip-meta-1-blocks 3)
-#     (strip-meta-2-blocks 3)
-#     (strip-fields 50))
 
-(-> path-2
+(-> path-1
     read-dson
-    (strip-meta-1-blocks 2)
+    (strip-meta-1-blocks 3)
     (strip-meta-2-blocks 3)
-    (strip-fields 30)
-    )
+    (strip-fields 50))
+
+(def f (file/temp))
+
+(-> (file/temp)
+    (file/write @"something something")
+    (file/read :all))
+
+# (-> path-2
+#     read-dson
+#     (strip-meta-1-blocks 2)
+#     (strip-meta-2-blocks 3)
+#     (strip-fields 30)
+#     )
 
 # (-> path-3
 #     read-dson
