@@ -37,7 +37,7 @@
 
 (defn buffer->float
   ```
-  Turn a 4-byte buffer into a float, following IEEE 754.
+  Turn a 4-byte buffer into a float following IEEE 754.
   ```
   [buf]
 

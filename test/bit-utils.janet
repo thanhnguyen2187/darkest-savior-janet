@@ -6,3 +6,10 @@
            33554432))
 (assert (= (buffer->int (buffer/push-word @"" 2187))
            2187))
+
+(assert (= (buffer->float (buffer/push-word @"" 0xc8d80000))
+           -442368))
+(assert (= (badd 123 456)
+           (+ 123 456)))
+(assert (= (bmul 123 456)
+           (* 123 456)))
