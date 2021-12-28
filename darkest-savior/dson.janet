@@ -15,42 +15,28 @@
 (defn make-fake-file
   "Create a fake file from bytes."
   [bytes]
-
   (var cursor 0)
-  (table :read (fn [n]
-                 (do
-                   (def result (string/slice bytes cursor (+ cursor n)))
-                   (+= cursor n)
-                   result))))
+  (fn [n]
+    (do
+      (def result (string/slice bytes cursor (+ cursor n)))
+      (+= cursor n)
+      result)))
 
-(defn read-fake-file
-  [fake-file n]
-  (-> fake-file
-      (|($ :read))
-      (|($ n))))
+# TODO: replace "read" with a better word
+(defn read-dson-bytes
+  ```
+  Read bytes of a Darkest Dungeon json file.
+  ```
+  [bytes]
 
-(+= 3 4)
-
-(-> "\x00\x01\x02\x99"
-    (make-fake-file)
-    (|($ :read))
-    (|($ 1))
-    )
-
-
-(defn read-dson
-  "Read a Darkest Dungeon json file."
-  [path]
-
-  (def dson-file
-    (file/open path :rb))
+  (def fake-dson-file
+    (make-fake-file bytes))
 
   (defn read-raw
     "Read `n` raw bytes from the file."
     [n]
-    (if (> n 0)
-      (file/read dson-file n)
-      :null))
+    (read-fake-file fake-dson-file n))
+
   (defn read-int
     "Read 4 bytes into an integer."
     []
@@ -101,24 +87,24 @@
     [meta-2-block]
     (def data
       (let [field-info (get meta-2-block :field-info)]
-        (table :is-primitive (band field-info
-                                   2r1)
+        (table :is-primitive      (-> field-info
+                                      (band 2r1))
                :field-name-length (-> field-info
                                       (band 2r11111111100)
                                       (brshift 2))
-               :meta-1-entry-idx (-> field-info
-                                           (band 2r1111111111111111111100000000000)
-                                           (brshift 11))
-               )))
-    (let [raw-data-offset (+ (get meta-2-block :offset)
-                             (get data :field-name-length))
-          aligned-bytes (- (* 4
-                              (math/ceil (/ raw-data-offset
-                                            4)))
-                           raw-data-offset)]
+               :meta-1-entry-idx  (-> field-info
+                                      (band 2r1111111111111111111100000000000)
+                                      (brshift 11)))))
+    (let [raw-data-offset (+ (meta-2-block :offset)
+                             (data         :field-name-length))
+          aligned-bytes (-> raw-data-offset
+                            (/ 4)
+                            math/ceil
+                            (* 4)
+                            (- raw-data-offset))]
       (merge-into data
                   {:raw-data-offset raw-data-offset
-                   :aligned-bytes aligned-bytes})))
+                   :aligned-bytes   aligned-bytes})))
 
   (defn read-meta-2-block
     []
@@ -170,11 +156,10 @@
           num-all-children    (get meta-1-block :num-all-children)
           meta-2-entry-idx    (get meta-1-block :meta-2-entry-idx)
           is-object           (= index meta-2-entry-idx)]
-      (put field
-           :inferences (table :is-object is-object
-                              :num-direct-children (if is-object
-                                                     num-direct-children
-                                                     :null)))))
+      (put field :inferences (table :is-object is-object
+                                    :num-direct-children (if is-object
+                                                           num-direct-children
+                                                           :null)))))
 
   (defn infere-fields-hierarchy
     ```
@@ -320,7 +305,7 @@
 
     (defn infere-field-data-type-heuristic
       ```
-      Infere field's data type by data length or other clues. `:file` is
+      Infer field's data type by data length or other clues. `:file` is
       `:string` with magic number.
       ```
       [field]
@@ -373,38 +358,70 @@
     - `:two-bool`: check if the last bit of the two bytes are toggled
     ```
     [field]
+
+    (defn infer-string-vector
+      [bytes]
+      ```
+      The bytes have this order:
+
+        | n | m1 | data | \0 | m2 | data | \0 | ...
+
+      Which means after having the length `n`, we have strings that are
+      `m1`-character long, `m2`-character long, etc.
+
+      For the actual work, we read `n`, and then repeat a process of reading
+      `m`s and data `n` times.
+      ```
+      (let [fake-file (make-fake-file bytes)
+            n (-> fake-file
+                  (read-fake-file 4)
+                  buffer->int)]
+        (seq [_ :in (range n)]
+          (-> fake-file
+              (read-fake-file 4)
+              (buffer->int)
+              (|(read-fake-file fake-file $))
+              (slice 0 -2) # the result string have a redundant `\0`
+              ))))
+
     (let [data-type (get-in field [:inferences :data-type])
           raw-data  (field :raw-data-stripped)]
       (case data-type
         :char          raw-data
-        :float         :unimplemented
-        :int-vector    :unimplemented
-        :string-vector :unimplemented
-        :float-vector  :unimplemented
+        :float         (buffer->float raw-data)
+        :int-vector    (->> raw-data
+                            (|(slice $ 4))
+                            (partition 4)
+                            (map buffer->int))
+        :string-vector (infer-string-vector raw-data)
+        :float-vector  (->> raw-data
+                            (|(slice $ 4))
+                            (partition 4)
+                            (map buffer->float))
         :two-int       [(buffer->int raw-data)
                         (buffer->int (slice raw-data 4))]
         :bool          (= 1 (raw-data 0))
         :two-bool      [(= 1 (raw-data 0))
                         (= 1 (raw-data 1))]
         :int           (buffer->int raw-data)
-        :file          :unimplemented
+        :file          (read-dson-bytes raw-data)
         :string        (slice raw-data 4 -2)
         :unknown
         )))
 
   (defn read-field
     [meta-2-block]
-    (let [inferences (get meta-2-block :inferences)
-          index (get meta-2-block :index)
-          meta-1-entry-idx (get inferences :meta-1-entry-idx)
-          field-name-length (get inferences :field-name-length)
+    (let [inferences (meta-2-block :inferences)
+          index (meta-2-block :index)
+          meta-1-entry-idx (inferences :meta-1-entry-idx)
+          field-name-length (inferences :field-name-length)
           # `slice` from 0 to -2 is needed to strip the last character
           # since the string include "\0" at its tail
           field-name (slice (read-raw field-name-length)
                             0 -2)
-          raw-data-length (get inferences :raw-data-length)
+          raw-data-length (inferences :raw-data-length)
           raw-data (read-raw raw-data-length)
-          aligned-bytes (get inferences :aligned-bytes)
+          aligned-bytes (inferences :aligned-bytes)
           raw-data-stripped (if (> raw-data-length aligned-bytes)
                               (slice raw-data aligned-bytes)
                               raw-data)]
@@ -441,6 +458,19 @@
            :fields fields
            )))
 
+
+(defn read-dson-file
+  ```
+  Read a Darkest Dungeon json file, decode it and return structured data.
+  ```
+  [path]
+  (-> path
+      (file/open :rb)
+      (file/read :all)
+      read-dson-bytes
+      ))
+
+
 (defn strip-blocks
   [dson-data key &opt len]
   (def blocks (get dson-data key))
@@ -475,27 +505,22 @@
 
 
 (-> path-1
-    read-dson
+    read-dson-file
     (strip-meta-1-blocks 3)
     (strip-meta-2-blocks 3)
     (strip-fields 50))
 
-(def f (file/temp))
+(-> path-2
+    read-dson-file
+    (strip-meta-1-blocks 2)
+    (strip-meta-2-blocks 3)
+    (strip-fields 30)
+    )
 
-(-> (file/temp)
-    (file/write @"something something")
-    (file/read :all))
+(-> path-3
+    read-dson-file
+    (strip-meta-2-blocks 3)
+    (strip-meta-1-blocks 3)
+    (strip-fields 60))
 
-# (-> path-2
-#     read-dson
-#     (strip-meta-1-blocks 2)
-#     (strip-meta-2-blocks 3)
-#     (strip-fields 30)
-#     )
-
-# (-> path-3
-#     read-dson
-#     (strip-meta-2-blocks 20)
-#     (strip-meta-1-blocks 20)
-#     (strip-fields 20)
-#     )
+(slice "\x01\0\0\0\x14\0\0\0kill_drowned_crew_A\0" 8)
