@@ -1,4 +1,5 @@
 (import ./zip :prefix "")
+(import ./skip :prefix "")
 (import ./bit-utils :prefix "")
 
 
@@ -22,9 +23,11 @@
       (+= cursor n)
       result)))
 
+
 (defn read-fake-file
   [fake-file n]
   (fake-file n))
+
 
 # TODO: replace "read" with a better word
 (defn read-dson-bytes
@@ -370,7 +373,7 @@
 
         | n | m1 | data | \0 | m2 | data | \0 | ...
 
-      Which means after having the length `n`, we have strings that are
+      Which means after having the vector length `n`, we have strings that are
       `m1`-character long, `m2`-character long, etc.
 
       For the actual work, we read `n`, and then repeat a process of reading
@@ -394,12 +397,12 @@
         :char          raw-data
         :float         (buffer->float raw-data)
         :int-vector    (->> raw-data
-                            (|(slice $ 4))
+                            (skip 4)
                             (partition 4)
                             (map buffer->int))
         :string-vector (infer-string-vector raw-data)
         :float-vector  (->> raw-data
-                            (|(slice $ 4))
+                            (skip 4)
                             (partition 4)
                             (map buffer->float))
         :two-int       [(buffer->int raw-data)
@@ -501,17 +504,9 @@
 
 (defn skip-fields
   [dson-data &opt n]
-  (update dson-data :fields |(skip $ n)))
-
-(defn skip
-  ```
-  Skip the first `n` elements of a collection.
-  ```
-  [coll n]
-  (case (type coll)
-    :array (array/slice coll n)
-    :tuple (tuple/slice coll n)
-    (error "Not an indexed type!")))
+  (update dson-data
+          :fields
+          |(skip $ n)))
 
 # (def base-path "/home/thanh/.local/share/Steam/userdata/1036932376/262060/remote")
 (def base-path (string (os/cwd) "/sample-data"))
@@ -540,22 +535,22 @@
   (map |(string base-path "/" $)
        file-names))
 
-(-> (paths 0)
+(-> (paths 14)
     read-dson-file
     (strip-meta-1-blocks 3)
     (strip-meta-2-blocks 3)
-    (skip-fields 50)
-    (strip-fields 50)
-    )
-
-(-> (paths 13)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (skip-fields 50)
+    # (skip-fields 50)
     (strip-fields 50))
+
+(protect
+  (-> (paths 14)
+      read-dson-file
+      (strip-meta-1-blocks 3)
+      (strip-meta-2-blocks 3)
+      # (skip-fields 50)
+      (strip-fields 50)))
 
 (def A @[1 2 3 4])
 (put A 0 0)
 
-# (slice "\x01\0\0\0\x14\0\0\0kill_drowned_crew_A\0" 8)
+# # (slice "\x01\0\0\0\x14\0\0\0kill_drowned_crew_A\0" 8)
