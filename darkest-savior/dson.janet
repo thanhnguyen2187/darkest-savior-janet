@@ -1,6 +1,7 @@
-(import ./zip :prefix "")
-(import ./skip :prefix "")
-(import ./bit-utils :prefix "")
+(use ./zip)
+(use ./skip)
+(use ./bit-utils)
+(use ./fake-file)
 
 
 (defn hash-dson-string
