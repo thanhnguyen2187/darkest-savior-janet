@@ -22,6 +22,10 @@
       (+= cursor n)
       result)))
 
+(defn read-fake-file
+  [fake-file n]
+  (fake-file n))
+
 # TODO: replace "read" with a better word
 (defn read-dson-bytes
   ```
@@ -495,32 +499,63 @@
   [dson-data &opt len]
   (strip-blocks dson-data :fields len))
 
-(def base-path "/home/thanh/.local/share/Steam/userdata/1036932376/262060/remote")
-(def path-1 (string/join [base-path "profile_1" "novelty_tracker.json"] "/"))
-(def path-2 (string/join [base-path "profile_1" "persist.campaign_log.json"] "/"))
-(def path-3 (string/join [base-path "profile_1" "persist.quest.json"] "/"))
-(def path-4 (string/join [base-path "profile_1" "persist.estate.json"] "/"))
-(def path-5 (string/join [base-path "profile_1" "persist.game.json"] "/"))
-(def path-6 (string/join [base-path "profile_1" "persist.narration.json"] "/"))
+(defn skip-fields
+  [dson-data &opt n]
+  (update dson-data :fields |(skip $ n)))
 
+(defn skip
+  ```
+  Skip the first `n` elements of a collection.
+  ```
+  [coll n]
+  (case (type coll)
+    :array (array/slice coll n)
+    :tuple (tuple/slice coll n)
+    (error "Not an indexed type!")))
 
-(-> path-1
+# (def base-path "/home/thanh/.local/share/Steam/userdata/1036932376/262060/remote")
+(def base-path (string (os/cwd) "/sample-data"))
+
+(def file-names
+  [
+  "persist.upgrades.json"       # 0
+  "persist.estate.json"         # 1
+  "persist.roster.json"         # 2
+  "persist.campaign_log.json"   # 3
+  "persist.game_knowledge.json" # 4
+  "persist.curio_tracker.json"  # 5
+  "persist.game.json"           # 6
+  "persist.campaign_mash.json"  # 7
+  "persist.journal.json"        # 8
+  "novelty_tracker.json"        # 9
+  "persist.narration.json"      # 10
+  "persist.town.json"           # 11
+  "persist.quest.json"          # 12
+  "persist.town_event.json"     # 13
+  "persist.tutorial.json"       # 14
+  "persist.progression.json"    # 15
+  ])
+
+(def paths
+  (map |(string base-path "/" $)
+       file-names))
+
+(-> (paths 0)
     read-dson-file
     (strip-meta-1-blocks 3)
     (strip-meta-2-blocks 3)
-    (strip-fields 50))
-
-(-> path-2
-    read-dson-file
-    (strip-meta-1-blocks 2)
-    (strip-meta-2-blocks 3)
-    (strip-fields 30)
+    (skip-fields 50)
+    (strip-fields 50)
     )
 
-(-> path-3
+(-> (paths 13)
     read-dson-file
-    (strip-meta-2-blocks 3)
     (strip-meta-1-blocks 3)
-    (strip-fields 60))
+    (strip-meta-2-blocks 3)
+    (skip-fields 50)
+    (strip-fields 50))
 
-(slice "\x01\0\0\0\x14\0\0\0kill_drowned_crew_A\0" 8)
+(def A @[1 2 3 4])
+(put A 0 0)
+
+# (slice "\x01\0\0\0\x14\0\0\0kill_drowned_crew_A\0" 8)
