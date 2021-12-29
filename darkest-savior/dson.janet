@@ -14,26 +14,10 @@
   value)
 
 
-(defn make-fake-file
-  "Create a fake file from bytes."
-  [bytes]
-  (var cursor 0)
-  (fn [n]
-    (do
-      (def result (string/slice bytes cursor (+ cursor n)))
-      (+= cursor n)
-      result)))
-
-
-(defn read-fake-file
-  [fake-file n]
-  (fake-file n))
-
-
 # TODO: replace "read" with a better word
 (defn read-dson-bytes
   ```
-  Read bytes of a Darkest Dungeon json file.
+  Read bytes of a DSON file.
   ```
   [bytes]
 
@@ -398,12 +382,12 @@
         :char          raw-data
         :float         (buffer->float raw-data)
         :int-vector    (->> raw-data
-                            (skip 4)
+                            (|(skip $ 4))
                             (partition 4)
                             (map buffer->int))
         :string-vector (infer-string-vector raw-data)
         :float-vector  (->> raw-data
-                            (skip 4)
+                            (|(skip $ 4))
                             (partition 4)
                             (map buffer->float))
         :two-int       [(buffer->int raw-data)
@@ -509,6 +493,25 @@
           :fields
           |(skip $ n)))
 
+(defn filter-normal-fields
+  [dson-data]
+  (let [fields (dson-data :fields)
+        special-field? (fn [field]
+                         (-> field
+                             (get-in [:inferences :data-type])
+                             (|(get {:float true
+                                     :int-vector true
+                                     :float-vector true
+                                     :file true
+                                     :unknown true
+                                     # :int true
+                                     }
+                                    $
+                                    false))))]
+    (update dson-data
+            :fields
+            |(filter special-field? $))))
+
 # (def base-path "/home/thanh/.local/share/Steam/userdata/1036932376/262060/remote")
 (def base-path (string (os/cwd) "/sample-data"))
 
@@ -536,12 +539,70 @@
   (map |(string base-path "/" $)
        file-names))
 
-(-> (paths 14)
+(-> (paths 4)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 5)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 6)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 7)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 8)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 9)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 10)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 11)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (filter-normal-fields)
+    )
+
+(-> (paths 12)
     read-dson-file
     (strip-meta-1-blocks 3)
     (strip-meta-2-blocks 3)
     # (skip-fields 50)
-    (strip-fields 50))
+    # (strip-fields 50)
+    (filter-normal-fields)
+    )
 
 (protect
   (-> (paths 14)
@@ -549,9 +610,10 @@
       (strip-meta-1-blocks 3)
       (strip-meta-2-blocks 3)
       # (skip-fields 50)
-      (strip-fields 50)))
+      # (strip-fields 50)
+      filter-normal-fields))
 
-(def A @[1 2 3 4])
-(put A 0 0)
+(protect
+  (skip [1 2 3] 2)
+  (skip "one two three" 3))
 
-# # (slice "\x01\0\0\0\x14\0\0\0kill_drowned_crew_A\0" 8)
