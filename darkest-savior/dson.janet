@@ -2,6 +2,7 @@
 (use ./skip)
 (use ./bit-utils)
 (use ./fake-file)
+(import json :as json)
 
 
 (defn hash-dson-string
@@ -317,8 +318,8 @@
                          (= 1 $)) (map |(buffer->int $)
                                        (partition 4 raw-data)))) :two-bool
           (= raw-data-length 4) :int
-          (and (>= raw-data-length 6)
-               (= (slice raw-data 0 4) "\x01\xB1\0\0")) :file
+          (and (>= raw-data-length 8)
+               (= (slice raw-data 4 8) "\x01\xB1\0\0")) :file
           (>= raw-data-length 5) :string
           :unknown
           )))
@@ -396,7 +397,9 @@
         :two-bool      [(= 1 (raw-data 0))
                         (= 1 (raw-data 1))]
         :int           (buffer->int raw-data)
-        :file          (read-dson-bytes raw-data)
+        :file          (-> raw-data
+                           (skip 4)
+                           read-dson-bytes)
         :string        (slice raw-data 4 -2)
         :unknown
         )))
@@ -487,6 +490,29 @@
   [dson-data &opt len]
   (strip-blocks dson-data :fields len))
 
+(defn strip-inner-blocks
+  [field key &opt len]
+  (let [data-type (get-in field [:inferences :data-type])]
+    (if (= data-type :file)
+      (strip-blocks (get-in field [:inferences :data]) key len)
+      field)))
+
+(defn strip-inner-meta-1-blocks
+  [field &opt len]
+  (strip-inner-blocks field :meta-1-blocks len))
+
+(defn strip-inner-meta-2-blocks
+  [field &opt len]
+  (strip-inner-blocks field :meta-2-blocks len))
+
+(defn strip-inner-meta-2-blocks
+  [field &opt len]
+  (strip-inner-blocks field :meta-2-blocks len))
+
+(defn strip-inner-fields
+  [field &opt len]
+  (strip-inner-blocks field :fields len))
+
 (defn skip-fields
   [dson-data &opt n]
   (update dson-data
@@ -499,13 +525,12 @@
         special-field? (fn [field]
                          (-> field
                              (get-in [:inferences :data-type])
-                             (|(get {:float true
-                                     :int-vector true
-                                     :float-vector true
-                                     :file true
-                                     :unknown true
-                                     # :int true
-                                     }
+                             (|(get {:float         true
+                                     :int-vector    true
+                                     :float-vector  true
+                                     :string-vector true
+                                     :file          true
+                                     :unknown       true}
                                     $
                                     false))))]
     (update dson-data
@@ -539,81 +564,46 @@
   (map |(string base-path "/" $)
        file-names))
 
-(-> (paths 4)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
+# (->> (seq [path :in paths]
+#        (-> path
+#            read-dson-file))
+#      # (map filter-normal-fields)
+#      (map |($ :fields))
+#      flatten
+#      (map |($ :inferences))
+#      # (map |(get-in $ [:inferences :data-type]))
+#      # distinct
+#      )
 
-(-> (paths 5)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 6)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 7)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 8)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 9)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 10)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 11)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (filter-normal-fields)
-    )
-
-(-> (paths 12)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    # (skip-fields 50)
-    # (strip-fields 50)
-    (filter-normal-fields)
-    )
+# (-> (paths 0)
+#     read-dson-file
+#     (|($ :fields))
+#     (|(map (fn [field] (field :inferences)) $))
+#     (json/encode)
+#     (spit))
 
 (protect
-  (-> (paths 14)
+  (-> (paths 2)
       read-dson-file
       (strip-meta-1-blocks 3)
       (strip-meta-2-blocks 3)
+      (filter-normal-fields)
+      (strip-fields 1)
+      (strip-inner-meta-1-blocks 3)
+      (strip-inner-meta-2-blocks 3)
+      (strip-inner-fields 3)
       # (skip-fields 50)
-      # (strip-fields 50)
-      filter-normal-fields))
+      # (|($ :fields))
+      # (map |($ :inferences))
+      # (json/encode)
+      # (spit "/tmp/test.json")
+    ))
 
-(protect
-  (skip [1 2 3] 2)
-  (skip "one two three" 3))
+(-> (paths 3)
+    read-dson-file
+    (strip-meta-1-blocks 3)
+    (strip-meta-2-blocks 3)
+    (strip-fields 50)
+    # filter-normal-fields
+    )
 
