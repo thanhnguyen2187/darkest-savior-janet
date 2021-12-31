@@ -15,6 +15,21 @@
   value)
 
 
+(def hashed-names
+  (->> "/tmp/names.txt"
+       slurp
+       (string/split "\n")
+       (|(zipcoll (map hash-dson-string $)
+                  $))))
+
+
+(defn some?
+  [value]
+  (if (nil? value)
+    nil
+    value))
+
+
 # TODO: replace "read" with a better word
 (defn read-dson-bytes
   ```
@@ -76,7 +91,7 @@
                                 {:index index})))
       meta-1-blocks))
 
-  (defn infere-meta-2-block
+  (defn infer-meta-2-block
     [meta-2-block]
     (def data
       (let [field-info (get meta-2-block :field-info)]
@@ -106,7 +121,7 @@
              :offset (read-int)
              :field-info (read-int)))
     (merge-into data
-                {:inferences (infere-meta-2-block data)}))
+                {:inferences (infer-meta-2-block data)}))
 
   (defn read-meta-2-blocks
     ```
@@ -139,7 +154,7 @@
                       :offset (get header :data-length)})))
     meta-2-blocks)
 
-  (defn infere-field
+  (defn infer-field
     [meta-1-blocks
      field]
     (let [index               (get field :index)
@@ -154,7 +169,7 @@
                                                            num-direct-children
                                                            :null)))))
 
-  (defn infere-fields-hierarchy
+  (defn infer-fields-hierarchy
     ```
     Infere fields hierarchy by a stack, since the fields are laid out
     sequentially with a "num-direct-children" within each.
@@ -188,7 +203,7 @@
             last
             (update :num-remain-children dec)))
 
-      (defn infere-parent-field-index
+      (defn infer-parent-field-index
         [field]
         (put-in field
                 [:inferences :parent-field-index]
@@ -204,7 +219,7 @@
           (array/pop objects-stack)))
 
       (loop [field :in fields]
-        (infere-parent-field-index field)
+        (infer-parent-field-index field)
         (decrease-last-num-remain-children)
         (remove-fulfilled-object)
         (if (and (get-in field [:inferences :is-object])
@@ -217,7 +232,7 @@
                                       :num-remain-children num-remain-children}]
             (array/push objects-stack new-object)))))
 
-    (defn infere-hierarchy-path
+    (defn infer-hierarchy-path
       [field &opt current-names]
       (default current-names @[])
       (if (= (field :index) 0)
@@ -225,18 +240,18 @@
         (let [field-name (get field :name)
               parent-field-index (get-in field [:inferences :parent-field-index])
               parent-field (get fields parent-field-index)]
-          (infere-hierarchy-path parent-field
+          (infer-hierarchy-path parent-field
                                  (array/push current-names field-name)))))
 
     (->> fields
          (map |(put-in $
                        [:inferences :hierarchy-path]
-                       (reverse (infere-hierarchy-path $))))))
+                       (reverse (infer-hierarchy-path $))))))
 
-  (defn infere-field-data-type
+  (defn infer-field-data-type
     [field]
 
-    (defn infere-field-data-type-hard-coded
+    (defn infer-field-data-type-hard-coded
       ```
       Infere field's data type by hard-coded hierarchy path since there is no
       special characteristic to infer the correct type.
@@ -296,7 +311,7 @@
           _                                                          :unknown
           )))
 
-    (defn infere-field-data-type-heuristic
+    (defn infer-field-data-type-heuristic
       ```
       Infer field's data type by data length or other clues. `:file` is
       `:string` with magic number.
@@ -330,13 +345,13 @@
             true  :object
             :unknown))
         (|(case $
-            :unknown (infere-field-data-type-hard-coded field)
+            :unknown (infer-field-data-type-hard-coded field)
             $))
         (|(case $
-            :unknown (infere-field-data-type-heuristic field)
+            :unknown (infer-field-data-type-heuristic field)
             $))))
 
-  (defn infere-field-data
+  (defn infer-field-data
     ```
     Infere field data by data type.
 
@@ -396,7 +411,12 @@
         :bool          (= 1 (raw-data 0))
         :two-bool      [(= 1 (raw-data 0))
                         (= 1 (raw-data 1))]
-        :int           (buffer->int raw-data)
+        :int           (-> raw-data
+                           buffer->int
+                           (|(let [found-name (get hashed-names $)]
+                               (if found-name
+                                 (string "### " found-name)
+                                 $))))
         :file          (-> raw-data
                            (skip 4)
                            read-dson-bytes)
@@ -433,14 +453,14 @@
      meta-2-blocks]
     (->> meta-2-blocks
          (map read-field)
-         (map |(infere-field meta-1-blocks $))
-         (infere-fields-hierarchy meta-1-blocks)
+         (map |(infer-field meta-1-blocks $))
+         (infer-fields-hierarchy meta-1-blocks)
          (map |(put-in $
                        [:inferences :data-type]
-                       (infere-field-data-type $)))
+                       (infer-field-data-type $)))
          (map |(put-in $
                        [:inferences :data]
-                       (infere-field-data $)))
+                       (infer-field-data $)))
          ))
 
   (let [meta-1-blocks (read-meta-1-blocks (get header :num-meta-1-entries))
@@ -583,15 +603,18 @@
 #     (spit))
 
 (protect
-  (-> (paths 2)
+  (-> (paths 3)
       read-dson-file
       (strip-meta-1-blocks 3)
-      (strip-meta-2-blocks 3)
-      (filter-normal-fields)
-      (strip-fields 1)
-      (strip-inner-meta-1-blocks 3)
-      (strip-inner-meta-2-blocks 3)
-      (strip-inner-fields 3)
+      (strip-meta-2-blocks 30)
+      (skip-fields 30)
+      (skip-fields 30)
+      (strip-fields 30)
+      # (filter-normal-fields)
+      # (strip-fields 1)
+      # (strip-inner-meta-1-blocks 3)
+      # (strip-inner-meta-2-blocks 3)
+      # (strip-inner-fields 3)
       # (skip-fields 50)
       # (|($ :fields))
       # (map |($ :inferences))
