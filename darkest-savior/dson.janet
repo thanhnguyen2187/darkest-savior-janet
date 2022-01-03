@@ -8,92 +8,158 @@
 (def- hashed-values-cache @{})
 
 (defn hash-dson-string
+  ```
+  Hash a string to an int value following DSON's convention. Cache the hashed
+  values.
+  ```
   [str]
-  (var value 0)
-  (loop [byte :in str]
-    (set value
-         (badd (bmul value 53)
-               byte)))
-  value)
 
+  (let [found-hashed-value (get hashed-values-cache str)]
+    # `badd` and `bmul` is used to keep the value fits into a 32-bit int
+    # and  preverse the "traditional" overflowing behavior
+    (default found-hashed-value
+      (-> (reduce
+            (fn [new-hashed-value byte]
+              (-> new-hashed-value
+                  (bmul 53)
+                  (badd byte)))
+            0
+            str)
+          (|(do
+              (put hashed-values-cache str $)
+              $)))
+      )))
 
-(def hashed-names
-  (->> "/tmp/names.txt"
+(def- hashed-names
+  (->> "raw-names.txt"
        slurp
        (string/split "\n")
-       (|(zipcoll (map hash-dson-string $)
-                  $))))
+       ((fn [names]
+          (zipcoll (map hash-dson-string names)
+                   names)))))
 
-
-(defn some?
-  [value]
-  (if (nil? value)
-    nil
-    value))
-
-
-# TODO: replace "read" with a better word
-(defn read-dson-bytes
+(defn- attempt-hashed-int
   ```
-  Read bytes of a DSON file.
+  Check if the number is the hash of a meaningful string.
+  ```
+  [number]
+  (let [found-name (get hashed-names number)]
+    (if found-name
+      (string "###" found-name)
+      number)))
+
+
+(defn decode-bytes
+  ```
+  Decode a DSON file's bytes and return structured data.
+
+  The bytes can generally split into three parts:
+
+  - `header`
+  - `meta-1-blocks`
+  - `meta-2-blocks`
+  - `fields`
+
+  The purposes and decoding of each part can be read from the corresponding
+  functions.
   ```
   [bytes]
 
   (def fake-dson-file
-    (make-fake-file bytes))
+    ```
+    At first, `decode-dson-bytes` is named `read-dson-file` which takes a file
+    path and expected to return the structured data. There can be other fully
+    shaped DSON bytes structures embedded within the file, however. The approach
+    then leads us to creating a temporary file, which seems clunky.
+
+    A simple solution of `fake-file` to keep track of the current reading
+    cursor's index then is implemented.
+    ```
+    (fake-file/make bytes))
 
   (defn read-raw
-    "Read `n` raw bytes from the file."
+    ```
+    Read `n` raw bytes from the file.
+    ```
     [n]
-    (read-fake-file fake-dson-file n))
+    (fake-file/read fake-dson-file
+                    n))
 
   (defn read-int
-    "Read 4 bytes into an integer."
+    ```
+    Read 4 bytes into an integer.
+    ```
     []
     (buffer->int (read-raw 4)))
 
-  (def header
-    (table
-     :magic-number (read-raw 4)
-     :revision (read-raw 4)
-     :header-length (read-int)
+  (defn decode-header
+    ```
+    Decode the first 64 bytes of the file which contain general metadata.
 
-     :zeroes (read-raw 4)
-
-     :meta-1-size (read-int)
-     :num-meta-1-entries (read-int)
-     :meta-1-offset (read-int)
-
-     :zeroes-2 (read-raw 8)
-     :zeroes-3 (read-raw 8)
-
-     :num-meta-2-entries (read-int)
-     :meta-2-offset (read-int)
-
-     :zeroes-4 (read-raw 4)
-
-     :data-length (read-int)
-     :data-offset (read-int)))
-
-  (defn read-meta-1-block
+    - `magic-number`: must be "\x01\xB1\0\0"
+    - `revision`
+    - `header-length`: always is `64`
+    - `zeroes`: zero-filled bytes
+    - `meta-1-size`: size of `meta-1-blocks`
+    - `num-meta-1-entries`: meta 1 blocks count
+    - `meta-1-offest`
+    - `zeroes-2`: zero-filled bytes
+    - `zeroes-3`: zero-filled bytes
+    - `num-meta-2-entries`: meta 2 blocks count
+    - `meta-2-offest`
+    - `zeroes-4`: zero-filled bytes
+    - `data-length`: length of the fields
+    - `data-offset`
+    ```
     []
-    (table :parent-index (read-int)
-           :meta-2-entry-idx (read-int)
-           :num-direct-children (read-int)
-           :num-all-children (read-int)))
+    (table
+     :magic-number       (read-raw 4)
+     :revision           (read-raw 4)
+     :header-length      (read-int)
+     :zeroes             (read-raw 4)
+     :meta-1-size        (read-int)
+     :num-meta-1-entries (read-int)
+     :meta-1-offset      (read-int)
+     :zeroes-2           (read-raw 8)
+     :zeroes-3           (read-raw 8)
+     :num-meta-2-entries (read-int)
+     :meta-2-offset      (read-int)
+     :zeroes-4           (read-raw 4)
+     :data-length        (read-int)
+     :data-offset        (read-int)))
 
-  (defn read-meta-1-blocks
-    "Read `n` meta 1 blocks from file."
+  (def header (decode-header))
+
+  (defn decode-meta-1-block
+    ```
+    Decode a "meta 1" block which contains the data to build up DSON's tree
+    structure.
+    ```
+    []
+    (table :parent-index        (read-int)
+           :meta-2-entry-idx    (read-int)
+           :num-direct-children (read-int)
+           :num-all-children    (read-int)))
+
+  (defn decode-meta-1-blocks
+    ```
+    Decode `n` meta 1 blocks.
+    ```
     [n]
-    (let [index 0
-          meta-1-blocks @[]]
-      (loop [index :range [0 n]]
-        (array/push meta-1-blocks
-                    (merge-into (read-meta-1-block)
-                                {:index index})))
-      meta-1-blocks))
+    (seq [index :range [0 n]]
+      (merge-into (decode-meta-1-block)
+                  {:index index})))
 
   (defn infer-meta-2-block
+    ```
+    Infer new data from the decoded "meta 2" block.
+
+    The block is 4-byte aligned, which means:
+
+    - `8` is not touched
+    - `11` gets padded `1` byte to become `12`
+    - `21` gets padded `3` bytes to become `24`
+    ```
     [meta-2-block]
     (def data
       (let [field-info (get meta-2-block :field-info)]
@@ -107,16 +173,24 @@
                                       (brshift 11)))))
     (let [raw-data-offset (+ (meta-2-block :offset)
                              (data         :field-name-length))
-          aligned-bytes (-> raw-data-offset
-                            (/ 4)
-                            math/ceil
-                            (* 4)
-                            (- raw-data-offset))]
+          aligned-bytes-count (-> raw-data-offset
+                                  (/ 4)
+                                  math/ceil
+                                  (* 4)
+                                  (- raw-data-offset))]
       (merge-into data
-                  {:raw-data-offset raw-data-offset
-                   :aligned-bytes   aligned-bytes})))
+                  {:raw-data-offset     raw-data-offset
+                   :aligned-bytes-count aligned-bytes-count})))
 
-  (defn read-meta-2-block
+  (defn decode-meta-2-block
+    ```
+    Decode a "meta 2" block which contains data about the fields of the DSON
+    file.
+
+    - `name-hash` is the field's name ran through `hash-dson-string`
+    - `offset` is the field's starting index
+    - `field-info` is the field's bits to infer other data
+    ```
     []
     (def data
       (table :name-hash (read-int)
@@ -125,21 +199,23 @@
     (merge-into data
                 {:inferences (infer-meta-2-block data)}))
 
-  (defn read-meta-2-blocks
+  (defn decode-meta-2-blocks
     ```
-    Read `n` meta 2 blocks from file. `raw-data-length` is inferred by the
-    difference between the second (next) block's offset, and sum of the first
-    (previous)'s offset and field name length. The last block's
-    `raw-data-length` can be calculated, using `data-length` from header as
-    the second offset.
+    Decode `n` meta 2 blocks from file.
+
+    `raw-data-length` is inferred by the difference between the second (next)
+    block's offset, and sum of the first (previous)'s offset and field name
+    length. The last block's `raw-data-length` can be calculated, using
+    `data-length` from header as the second offset.
     ```
     [n]
 
     (def meta-2-blocks
       (seq
         [index :in (range n)]
-        (merge-into (read-meta-2-block)
+        (merge-into (decode-meta-2-block)
                     {:index index})))
+
     (map (fn [[block-1 block-2]]
            (put-in block-1
                    [:inferences :raw-data-length]
@@ -148,23 +224,27 @@
                          (get-in block-1 [:inferences
                                           :field-name-length])))))
          (zip meta-2-blocks
-              (tuple ;(slice meta-2-blocks 1)
-                     {:field-info 0
-                      :index math/inf
-                      :inferences {}
-                      :name-hash 0
-                      :offset (get header :data-length)})))
+              [;(slice meta-2-blocks 1)
+               {:field-info 0
+                :index math/inf
+                :inferences {}
+                :name-hash 0
+                :offset (header :data-length)}]))
+
     meta-2-blocks)
 
   (defn infer-field
+    ```
+    Infer if a field is an object and. In case it is, find out how many children
+    does it have. The data is needed for later hierarchy structure building.
+    ```
     [meta-1-blocks
      field]
-    (let [index               (get field :index)
-          meta-1-entry-idx    (get field :meta-1-entry-idx)
+    (let [index               (field :index)
+          meta-1-entry-idx    (field :meta-1-entry-idx)
           meta-1-block        (meta-1-blocks meta-1-entry-idx)
-          num-direct-children (get meta-1-block :num-direct-children)
-          num-all-children    (get meta-1-block :num-all-children)
-          meta-2-entry-idx    (get meta-1-block :meta-2-entry-idx)
+          num-direct-children (meta-1-block :num-direct-children)
+          meta-2-entry-idx    (meta-1-block :meta-2-entry-idx)
           is-object           (= index meta-2-entry-idx)]
       (put field :inferences (table :is-object is-object
                                     :num-direct-children (if is-object
@@ -173,7 +253,7 @@
 
   (defn infer-fields-hierarchy
     ```
-    Infere fields hierarchy by a stack, since the fields are laid out
+    Infer fields hierarchy by a stack, since the fields are laid out
     sequentially with a "num-direct-children" within each.
 
     Example:
@@ -220,10 +300,8 @@
                      (get :num-remain-children)))
           (array/pop objects-stack)))
 
-      (loop [field :in fields]
-        (infer-parent-field-index field)
-        (decrease-last-num-remain-children)
-        (remove-fulfilled-object)
+      (defn add-new-object
+        [field]
         (if (and (get-in field [:inferences :is-object])
                  (pos? (get-in field [:inferences :num-direct-children])))
           (let [field-index         (get field :index)
@@ -232,9 +310,20 @@
                 new-object          @{:field-index field-index
                                       :field-name field-name
                                       :num-remain-children num-remain-children}]
-            (array/push objects-stack new-object)))))
+            (array/push objects-stack new-object))))
+
+      (loop [field :in fields]
+        (infer-parent-field-index field)
+        (decrease-last-num-remain-children)
+        (remove-fulfilled-object)
+        (add-new-object field)))
 
     (defn infer-hierarchy-path
+      ```
+      Do a simple DFS that depends on `parent-field-index` to infer the
+      hierarchy path of the field. DFS should stop at field 0, which is
+      `base_root`.
+      ```
       [field &opt current-names]
       (default current-names @[])
       (if (= (field :index) 0)
@@ -251,69 +340,101 @@
                        (reverse (infer-hierarchy-path $))))))
 
   (defn infer-field-data-type
+    ```
+    Infer field's data type for later raw data decoding.
+    ```
     [field]
 
-    (defn infer-field-data-type-hard-coded
+    (defn process-by-hard-coded-values
       ```
-      Infere field's data type by hard-coded hierarchy path since there is no
-      special characteristic to infer the correct type.
+      Infer field's data type by hard-coded field names and hard-coded hierarchy
+      paths.
       ```
       [field]
-      (let [hierarchy-path (get-in field [:inferences :hierarchy-path])]
-        (match hierarchy-path
-          ["requirement_code"]                                       :char
+      (let [field-name     (field :name)
+            hierarchy-path (get-in field [:inferences :hierarchy-path])]
+        (cond
 
-          ["current_hp"]                                             :float
-          ["m_Stress"]                                               :float
-          ["actor" "buff_group" _ "amount"]                          :float
-          ["chapter" _ _ "percent"]                                  :float
-          ["non_rolled_additional_chances" _ "chance"]               :float
+          (or
+            (case field-name
+              "requirement_code" true
+              false))
+          :char
 
-          ["read_page_index"]                                        :int-vector
-          ["raid_read_page_indexes"]                                 :int-vector
-          ["raid_unread_page_indexes"]                               :int-vector
-          ["dungeons_unlocked"]                                      :int-vector
-          ["played_video_list"]                                      :int-vector
-          ["trinked_retention_ids"]                                  :int-vector
-          ["last_party_guids"]                                       :int-vector
-          ["dungeon_history"]                                        :int-vector
-          ["buff_group_guids"]                                       :int-vector
-          ["result_event_history"]                                   :int-vector
-          ["dead_hero_entries"]                                      :int-vector
-          ["additional_mash_disabled_infestation_monster_class_ids"] :int-vector
-          ["mash" "valid_additional_mash_entry_indexes"]             :int-vector
-          ["party" "heroes"]                                         :int-vector
-          ["skill_cooldown_keys"]                                    :int-vector
-          ["skill_cooldown_values"]                                  :int-vector
-          ["bufferedSpawningSlotsAvailable"]                         :int-vector
-          ["curioGroups" _ "curios"]                                 :int-vector
-          ["curioGroups" _ "curio_table_entries"]                    :int-vector
-          ["raid_finish_quirk_monster_class_ids"]                    :int-vector
-          ["narration_audio_event_queue_tags"]                       :int-vector
-          ["dispatched_events"]                                      :int-vector
-          ["backer_heroes" _ "combat_skills"]                        :int-vector
-          ["backer_heroes" _ "camping_skills"]                       :int-vector
-          ["backer_heroes" _ "quirks"]                               :int-vector
+          (or
+            (case field-name
+              "current_hp" true
+              "m_Stress"   true
+              false)
+            (match hierarchy-path
+              ["actor" "buff_group" _ "amount"] true
+              ["chapter" _ _ "percent"]         true
+              _                                 false))
+          :float
 
-          ["goal_ids"]                                               :string-vector
-          ["quests" _ "goal_ids"]                                    :string-vector
-          ["roaming_dungeon_2_ids" _ "s"]                            :string-vector
-          ["quirk_group"]                                            :string-vector
-          ["backgroundNames"]                                        :string-vector
-          ["backgroundGroups" _ "backgrounds"]                       :string-vector
-          ["backgroundGroups" _ "background_table_entries"]          :string-vector
+          (or
+            (case field-name
+              "read_page_indexes"                                      true
+              "raid_page_indexes"                                      true
+              "raid_unpage_indexes"                                    true
+              "dungeons_unlocked"                                      true
+              "played_video_list"                                      true
+              "trinked_retention_ids"                                  true
+              "last_party_guids"                                       true
+              "dungeon_history"                                        true
+              "buff_group_guids"                                       true
+              "result_event_history"                                   true
+              "dead_hero_entries"                                      true
+              "additional_mash_disabled_infestation_monster_class_ids" true
+              "skill_cooldown_keys"                                    true
+              "skill_cooldown_values"                                  true
+              "bufferedSpawningSlotsAvailable"                         true
+              "raid_finish_quirk_monster_class_ids"                    true
+              "narration_audio_event_queue_tags"                       true
+              "dispatched_events"                                      true
+              false)
+            (match hierarchy-path
+              ["mash" "valid_additional_mash_entry_indexes"] true
+              ["party" "heroes"]                             true
+              ["curioGroups" _ "curios"]                     true
+              ["curioGroups" _ "curio_table_entries"]        true
+              ["backer_heroes" _ "combat_skills"]            true
+              ["backer_heroes" _ "camping_skills"]           true
+              ["backer_heroes" _ "quirks"]                   true
+              _                                              false))
+          :int-vector
 
-          ["map" "bounds"]                                           :float-vector
-          ["areas" _ "bounds"]                                       :float-vector
-          ["areas" _ "tiles" _ "mappos"]                             :float-vector
-          ["areas" _ "tiles" _ "sidepos"]                            :float-vector
+          (or
+            (case field-name
+              "goal_ids"        true
+              "quirk_group"     true
+              "backgroundNames" true
+              false)
+            (match hierarchy-path
+              ["roaming_dungeon_2_ids" _ "s"]                   true
+              ["backgroundGroups" _ "backgrounds"]              true
+              ["backgroundGroups" _ "background_table_entries"] true
+              _                                                 false))
+          :string-vector
 
-          ["killRange"]                                              :two-int
+          (or
+            (match hierarchy-path
+              ["map" "bounds"]                true
+              ["areas" _ "bounds"]            true
+              ["areas" _ "tiles" _ "mappos"]  true
+              ["areas" _ "tiles" _ "sidepos"] true
+              _                               false))
+          :float-vector
 
-          _                                                          :unknown
-          )))
+          (or
+            (case field-name
+              "killRange" true
+              false))
+          :two-int
 
-    (defn infer-field-data-type-heuristic
+          :unknown)))
+
+    (defn process-by-heuristic
       ```
       Infer field's data type by data length or other clues. `:file` is
       `:string` with magic number.
@@ -325,19 +446,31 @@
                               0
                               (length raw-data))]
         (cond
-          (= raw-data-length 1) (let [byte (get-in field [:raw-data 0])]
-                                  (if (and (>= 0x20 byte)
-                                           (<= 0x7E byte))
-                                    :char
-                                    :bool))
+
+          (= raw-data-length 1)
+          (let [byte (get-in field [:raw-data 0])]
+            (if (and (>= 0x20 byte)
+                     (<= 0x7E byte))
+              :char
+              :bool))
+
           (and (= raw-data-length 8)
-               (all |(or (= 0 $)
-                         (= 1 $)) (map |(buffer->int $)
-                                       (partition 4 raw-data)))) :two-bool
-          (= raw-data-length 4) :int
+               (all |(or (zero? $)
+                         (one?  $))
+                    (map |(buffer->int $)
+                         (partition 4 raw-data))))
+          :two-bool
+
+          (= raw-data-length 4)
+          :int
+
           (and (>= raw-data-length 8)
-               (= (slice raw-data 4 8) "\x01\xB1\0\0")) :file
-          (>= raw-data-length 5) :string
+               (= (slice raw-data 4 8) "\x01\xB1\0\0"))
+          :file
+
+          (>= raw-data-length 5)
+          :string
+
           :unknown
           )))
 
@@ -347,11 +480,12 @@
             true  :object
             :unknown))
         (|(case $
-            :unknown (infer-field-data-type-hard-coded field)
+            :unknown (process-by-hard-coded-values field)
             $))
         (|(case $
-            :unknown (infer-field-data-type-heuristic field)
-            $))))
+            :unknown (process-by-heuristic field)
+            $))
+        ))
 
   (defn infer-field-data
     ```
@@ -369,7 +503,7 @@
     ```
     [field]
 
-    (defn infer-string-vector
+    (defn decode-string-vector
       [bytes]
       ```
       The bytes have this order:
@@ -382,16 +516,16 @@
       For the actual work, we read `n`, and then repeat a process of reading
       `m`s and data `n` times.
       ```
-      (let [fake-file (make-fake-file bytes)
-            n (-> fake-file
-                  (read-fake-file 4)
+      (let [ff (fake-file/make bytes)
+            n (-> ff
+                  (fake-file/read 4)
                   buffer->int)]
         (seq [_ :in (range n)]
-          (-> fake-file
-              (read-fake-file 4)
+          (-> ff
+              (fake-file/read 4)
               (buffer->int)
-              (|(read-fake-file fake-file $))
-              (slice 0 -2) # the result string have a redundant `\0`
+              (|(fake-file/read ff $))
+              (slice 0 -2) # the resulting string have a redundant `\0`
               ))))
 
     (let [data-type (get-in field [:inferences :data-type])
@@ -399,49 +533,54 @@
       (case data-type
         :char          raw-data
         :float         (buffer->float raw-data)
+        # TODO: find out what does 1972053455 of "persist.tutorial.json" means
+        #       since within the file, the value stood out from the values of
+        #       hashed int vector
         :int-vector    (->> raw-data
                             (|(skip $ 4))
                             (partition 4)
-                            (map buffer->int))
-        :string-vector (infer-string-vector raw-data)
+                            (map buffer->int)
+                            (map attempt-hashed-int))
+        :string-vector (decode-string-vector raw-data)
         :float-vector  (->> raw-data
                             (|(skip $ 4))
                             (partition 4)
                             (map buffer->float))
-        :two-int       [(buffer->int raw-data)
-                        (buffer->int (slice raw-data 4))]
+        # :two-int       [(buffer->int raw-data)
+        #                 (buffer->int (skip raw-data 4))]
+        :two-int       (->> raw-data
+                            (partition 4)
+                            (map buffer->int))
         :bool          (= 1 (raw-data 0))
         :two-bool      [(= 1 (raw-data 0))
                         (= 1 (raw-data 1))]
-        :int           (-> raw-data
-                           buffer->int
-                           (|(let [found-name (get hashed-names $)]
-                               (if found-name
-                                 (string "### " found-name)
-                                 $))))
+        :int           (->> raw-data
+                            buffer->int
+                            attempt-hashed-int)
         :file          (-> raw-data
                            (skip 4)
-                           read-dson-bytes)
+                           decode-bytes)
         :string        (slice raw-data 4 -2)
         :unknown
         )))
 
-  (defn read-field
+  (defn decode-field
+    ```
+    Decode a field which is the actual data of a DSON file using a meta 2 block.
+    ```
     [meta-2-block]
-    (let [inferences (meta-2-block :inferences)
-          index (meta-2-block :index)
-          meta-1-entry-idx (inferences :meta-1-entry-idx)
-          field-name-length (inferences :field-name-length)
-          # `slice` from 0 to -2 is needed to strip the last character
-          # since the string include "\0" at its tail
-          field-name (slice (read-raw field-name-length)
-                            0 -2)
-          raw-data-length (inferences :raw-data-length)
-          raw-data (read-raw raw-data-length)
-          aligned-bytes (inferences :aligned-bytes)
-          raw-data-stripped (if (> raw-data-length aligned-bytes)
-                              (slice raw-data aligned-bytes)
-                              raw-data)]
+    (let [inferences          (meta-2-block :inferences)
+          index               (meta-2-block :index)
+          meta-1-entry-idx    (inferences :meta-1-entry-idx)
+          field-name-length   (inferences :field-name-length)
+
+          field-name          (slice (read-raw field-name-length) 0 -2) # the string include "\0" at its tail
+          raw-data-length     (inferences :raw-data-length)
+          raw-data            (read-raw raw-data-length)
+          aligned-bytes-count (inferences :aligned-bytes-count)
+          raw-data-stripped   (if (> raw-data-length aligned-bytes-count)
+                                (slice raw-data aligned-bytes-count)
+                                raw-data)]
       (table :index index
              :meta-1-entry-idx meta-1-entry-idx
              :name field-name
@@ -450,11 +589,15 @@
              :raw-data raw-data
              :raw-data-stripped raw-data-stripped)))
 
-  (defn read-fields
+  (defn decode-fields
+    ```
+    Decode fields. Meta 2 blocks are needed for the actual data decoding. Meta 1
+    blocks are needed for the structure building.
+    ```
     [meta-1-blocks
      meta-2-blocks]
     (->> meta-2-blocks
-         (map read-field)
+         (map decode-field)
          (map |(infer-field meta-1-blocks $))
          (infer-fields-hierarchy meta-1-blocks)
          (map |(put-in $
@@ -462,30 +605,32 @@
                        (infer-field-data-type $)))
          (map |(put-in $
                        [:inferences :data]
-                       (infer-field-data $)))
-         ))
+                       (infer-field-data $)))))
 
-  (let [meta-1-blocks (read-meta-1-blocks (get header :num-meta-1-entries))
-        meta-2-blocks (read-meta-2-blocks (get header :num-meta-2-entries))
-        fields (read-fields meta-1-blocks
-                            meta-2-blocks)]
-    (table :header header
+  # finally, we can return the data itself
+  (let [meta-1-blocks (-> header
+                          (get :num-meta-1-entries)
+                          decode-meta-1-blocks)
+        meta-2-blocks (-> header
+                          (get :num-meta-2-entries)
+                          decode-meta-2-blocks)
+        fields        (decode-fields meta-1-blocks
+                                     meta-2-blocks)]
+    (table :header        header
            :meta-1-blocks meta-1-blocks
            :meta-2-blocks meta-2-blocks
-           :fields fields
+           :fields        fields
            )))
 
 
-(defn read-dson-file
+(defn read-file-bytes
   ```
-  Read a Darkest Dungeon json file, decode it and return structured data.
+  Read bytes of a file.
   ```
   [path]
   (-> path
       (file/open :rb)
-      (file/read :all)
-      read-dson-bytes
-      ))
+      (file/read :all)))
 
 
 (defn strip-blocks
@@ -499,6 +644,7 @@
               @{key (slice blocks 0 len)
                 (keyword (string key "-stripped-length")) len
                 (keyword (string key "-full-length")) (length blocks)}))
+
 
 (defn strip-meta-1-blocks
   [dson-data &opt len]
@@ -545,90 +691,101 @@
   [dson-data]
   (let [fields (dson-data :fields)
         special-field? (fn [field]
-                         (-> field
-                             (get-in [:inferences :data-type])
-                             (|(get {:float         true
-                                     :int-vector    true
-                                     :float-vector  true
-                                     :string-vector true
-                                     :file          true
-                                     :unknown       true}
-                                    $
-                                    false))))]
+                         (let [data-type (get-in field [:inferences :data-type])
+                               special-data-types [:float
+                                                   :int-vector
+                                                   :float-vector
+                                                   :string-vector
+                                                   :file
+                                                   :unknown]
+                               data (get-in field [:inferences :data])]
+                           (or (find |(= $ data-type)
+                                     special-data-types)
+                               (and (string? data)
+                                    (= :int data-type)))))]
     (update dson-data
             :fields
             |(filter special-field? $))))
+
+
+(defn fields->table
+  [fields]
+
+  (def partial-transformed-fields
+    (seq [field :in fields]
+      (let [field-name         (get    field :name)
+            data-type          (get-in field [:inferences :data-type])
+            data               (get-in field [:inferences :data])
+            is-object          (get-in field [:inferences :is-object])
+            is-file            (= data-type :file)
+            parent-field-index (get-in field [:inferences :parent-field-index])]
+        @{field-name            (cond
+                                  is-object @{}
+                                  is-file (-> data
+                                              (get :fields)
+                                              fields->table)
+                                  data)
+          :__parent-field-index parent-field-index})))
+
+  (map (fn [partial-transformed-field]
+         (-?> partial-transformed-field
+              (|(do
+                  (def parent-field-index (get $ :__parent-field-index))
+                  (put $ :__parent-field-index nil)
+                  parent-field-index))
+              (|(get partial-transformed-fields $))
+              (|(merge-into (-?> $
+                                 keys
+                                 first
+                                 $)
+                            partial-transformed-field))))
+       partial-transformed-fields)
+
+  (map |(put $ :__parent-field-index nil)
+       partial-transformed-fields)
+
+  (partial-transformed-fields 0))
 
 # (def base-path "/home/thanh/.local/share/Steam/userdata/1036932376/262060/remote")
 (def base-path (string (os/cwd) "/sample-data"))
 
 (def file-names
   [
-  "persist.upgrades.json"       # 0
-  "persist.estate.json"         # 1
-  "persist.roster.json"         # 2
-  "persist.campaign_log.json"   # 3
-  "persist.game_knowledge.json" # 4
-  "persist.curio_tracker.json"  # 5
-  "persist.game.json"           # 6
-  "persist.campaign_mash.json"  # 7
-  "persist.journal.json"        # 8
-  "novelty_tracker.json"        # 9
-  "persist.narration.json"      # 10
-  "persist.town.json"           # 11
-  "persist.quest.json"          # 12
+  "novelty_tracker.json"        # 0
+  "persist.campaign_log.json"   # 1
+  "persist.campaign_mash.json"  # 2
+  "persist.curio_tracker.json"  # 3
+  "persist.estate.json"         # 4
+  "persist.game.json"           # 5
+  "persist.game_knowledge.json" # 6
+  "persist.journal.json"        # 7
+  "persist.narration.json"      # 8
+  "persist.progression.json"    # 9
+  "persist.quest.json"          # 10
+  "persist.roster.json"         # 11
+  "persist.town.json"           # 12
   "persist.town_event.json"     # 13
   "persist.tutorial.json"       # 14
-  "persist.progression.json"    # 15
+  "persist.upgrades.json"       # 15
   ])
 
 (def paths
   (map |(string base-path "/" $)
        file-names))
 
-# (->> (seq [path :in paths]
-#        (-> path
-#            read-dson-file))
-#      # (map filter-normal-fields)
-#      (map |($ :fields))
-#      flatten
-#      (map |($ :inferences))
-#      # (map |(get-in $ [:inferences :data-type]))
-#      # distinct
-#      )
-
-# (-> (paths 0)
-#     read-dson-file
-#     (|($ :fields))
-#     (|(map (fn [field] (field :inferences)) $))
-#     (json/encode)
-#     (spit))
-
-(protect
-  (-> (paths 3)
-      read-dson-file
-      (strip-meta-1-blocks 3)
-      (strip-meta-2-blocks 30)
-      (skip-fields 30)
-      (skip-fields 30)
-      (strip-fields 30)
-      # (filter-normal-fields)
-      # (strip-fields 1)
-      # (strip-inner-meta-1-blocks 3)
-      # (strip-inner-meta-2-blocks 3)
-      # (strip-inner-fields 3)
-      # (skip-fields 50)
-      # (|($ :fields))
-      # (map |($ :inferences))
-      # (json/encode)
-      # (spit "/tmp/test.json")
-    ))
-
-(-> (paths 3)
-    read-dson-file
-    (strip-meta-1-blocks 3)
-    (strip-meta-2-blocks 3)
-    (strip-fields 50)
-    # filter-normal-fields
-    )
+(-> (paths 2)
+     read-file-bytes
+     decode-bytes
+     (strip-meta-1-blocks 3)
+     (strip-meta-2-blocks 3)
+     (strip-fields 3)
+     # (|(get $ :fields))
+     # (fields->table)
+     # (string/format "%p")
+     # (json/encode)
+     # (spit "/tmp/test-2.janet")
+     # (|(spit (string/join ["/tmp" (paths 2)]
+     #                      "/")
+     #         $))
+     protect)
 
