@@ -1,9 +1,11 @@
 (use ./zip)
 (use ./skip)
 (use ./bit-utils)
-(use ./fake-file)
-(import json :as json)
 
+(import ./fake-file)
+(import json)
+
+(def- hashed-values-cache @{})
 
 (defn hash-dson-string
   [str]

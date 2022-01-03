@@ -1,8 +1,8 @@
-(defn make-fake-file
+(defn make
   ```
   Create a fake file from bytes which persist current cursor's index. Fake files
-  also saves us the headaches of creating a temporary file, and cleaning up
-  afterwards. Two specific cases of DSON can be listed here:
+  also save us the headaches of creating a temporary file and cleaning up
+  afterwards. Two specific use cases with DSON can be listed here:
 
   - A DSON file is embedded within another: we simply pass the raw bytes as a
   to the main reading function again
@@ -18,7 +18,7 @@
       result)))
 
 
-(defn read-fake-file
+(defn read
   [fake-file n]
   (fake-file n))
 
