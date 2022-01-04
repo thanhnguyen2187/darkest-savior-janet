@@ -31,7 +31,7 @@
       )))
 
 (def- hashed-names
-  (->> "raw-names.txt"
+  (->> "names.txt"
        slurp
        (string/split "\n")
        ((fn [names]
@@ -633,84 +633,10 @@
       (file/read :all)))
 
 
-(defn strip-blocks
-  [dson-data key &opt len]
-  (def blocks (get dson-data key))
-
-  (default len (min 10 (length blocks)))
-  (def len (min len (length blocks)))
-
-  (merge-into dson-data
-              @{key (slice blocks 0 len)
-                (keyword (string key "-stripped-length")) len
-                (keyword (string key "-full-length")) (length blocks)}))
-
-
-(defn strip-meta-1-blocks
-  [dson-data &opt len]
-  (strip-blocks dson-data :meta-1-blocks len))
-
-(defn strip-meta-2-blocks
-  [dson-data &opt len]
-  (strip-blocks dson-data :meta-2-blocks len))
-
-(defn strip-fields
-  [dson-data &opt len]
-  (strip-blocks dson-data :fields len))
-
-(defn strip-inner-blocks
-  [field key &opt len]
-  (let [data-type (get-in field [:inferences :data-type])]
-    (if (= data-type :file)
-      (strip-blocks (get-in field [:inferences :data]) key len)
-      field)))
-
-(defn strip-inner-meta-1-blocks
-  [field &opt len]
-  (strip-inner-blocks field :meta-1-blocks len))
-
-(defn strip-inner-meta-2-blocks
-  [field &opt len]
-  (strip-inner-blocks field :meta-2-blocks len))
-
-(defn strip-inner-meta-2-blocks
-  [field &opt len]
-  (strip-inner-blocks field :meta-2-blocks len))
-
-(defn strip-inner-fields
-  [field &opt len]
-  (strip-inner-blocks field :fields len))
-
-(defn skip-fields
-  [dson-data &opt n]
-  (update dson-data
-          :fields
-          |(skip $ n)))
-
-(defn filter-normal-fields
+(defn data->table
   [dson-data]
-  (let [fields (dson-data :fields)
-        special-field? (fn [field]
-                         (let [data-type (get-in field [:inferences :data-type])
-                               special-data-types [:float
-                                                   :int-vector
-                                                   :float-vector
-                                                   :string-vector
-                                                   :file
-                                                   :unknown]
-                               data (get-in field [:inferences :data])]
-                           (or (find |(= $ data-type)
-                                     special-data-types)
-                               (and (string? data)
-                                    (= :int data-type)))))]
-    (update dson-data
-            :fields
-            |(filter special-field? $))))
 
-
-(defn fields->table
-  [fields]
-
+  (def fields (dson-data :fields))
   (def partial-transformed-fields
     (seq [field :in fields]
       (let [field-name         (get    field :name)
@@ -745,33 +671,6 @@
        partial-transformed-fields)
 
   (partial-transformed-fields 0))
-
-# (def base-path "/home/thanh/.local/share/Steam/userdata/1036932376/262060/remote")
-(def base-path (string (os/cwd) "/sample-data"))
-
-(def file-names
-  [
-  "novelty_tracker.json"        # 0
-  "persist.campaign_log.json"   # 1
-  "persist.campaign_mash.json"  # 2
-  "persist.curio_tracker.json"  # 3
-  "persist.estate.json"         # 4
-  "persist.game.json"           # 5
-  "persist.game_knowledge.json" # 6
-  "persist.journal.json"        # 7
-  "persist.narration.json"      # 8
-  "persist.progression.json"    # 9
-  "persist.quest.json"          # 10
-  "persist.roster.json"         # 11
-  "persist.town.json"           # 12
-  "persist.town_event.json"     # 13
-  "persist.tutorial.json"       # 14
-  "persist.upgrades.json"       # 15
-  ])
-
-(def paths
-  (map |(string base-path "/" $)
-       file-names))
 
 (-> (paths 2)
      read-file-bytes
