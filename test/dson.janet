@@ -29,19 +29,41 @@
   (map |(string base-path "/" $)
        file-names))
 
-(->> paths
-     (map |(file/open $ :rn)))
 
+(defn test-path
+  [path]
+  (let [dson-data (-> path
+                      dson/read-file-bytes
+                      dson/decode-bytes)]
 
-(let [dson-data (-> (paths 2)
-                    dson/read-file-bytes
-                    dson/decode-bytes)]
-  (-> dson-data
-      # pp
-      (get-in [:header :magic-number])
-      (= "\x01\xB1\0\0")
-      assert)
-  
-  (-> false
-      assert))
+    # make sure that the magic numbers are correct
+    (-> dson-data
+        (get-in [:header :magic-number])
+        (= "\x01\xB1\0\0")
+        assert)
 
+    # make sure that there is exactly 64 bytes within the header
+    (-> dson-data
+        (get :header)
+        values
+        (|(map (fn [item]
+                 ```
+                 Return 4 bytes as the bytes count of an integer.
+                 Return `length` of others.
+                 ```
+                 (if (number? item)
+                   4
+                   (length item)))
+               $))
+        sum
+        (= 64)
+        assert)
+    ))
+
+(map test-path paths)
+
+(test-path (paths 1))
+
+(map length ["one two" "three four"])
+
+(protect (+ 1 1))
