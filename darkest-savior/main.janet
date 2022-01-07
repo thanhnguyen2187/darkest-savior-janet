@@ -1,24 +1,74 @@
+(defn print-lines
+  [lines]
+  (map print lines))
 
-(var input "")
 
-(while (not (= input "exit"))
-  (print "================================================================================")
-  (print "Welcome to Darkest Saviour, which is a simple save editor for Darkest Dungeon.")
-  (print "Please input \"exit\" to stop the program.")
-  (prin "Please input your save location: ")
-  (set input (string/trim (file/read stdin
-                                     :line))))
+(defn dispatch
+  [state]
+  (case state
+    :help
+    (do
+      (print
+        ```
+        darkest-savior
 
-(defn compare-buffers
-  "Compare first `n` bytes of two buffers."
-  [buffer-1 buffer-2 n]
-  (defn iterate
-    [buffer-1 buffer-2 index]
-    (if (>= index n)
-      true
-      (and (= (get buffer-1 index)
-              (get buffer-2 index))
-           (iterate buffer-1
-                    buffer-2
-                    (+ index 1)))))
-  (iterate buffer-1 buffer-2 0))
+        Darkest Dungeon save editor
+
+        Ruin has come to our command line.
+
+                                        - The Ancestor (probably) -
+
+        Usage:
+
+          --help/-h           show help
+          --interactive/-i    interactive mode
+          --convert/-c        converting mode
+          --from/-f [path]    path to a source Darkest Dungeon JSON file
+          --to/-t [path]      the destination JSON file; default to
+                              the source file's name
+
+        Example:
+
+          darkest-savior -i
+          darkest-savior -c -f /some/persist.dson-file.json -t /another/file.json
+        ```)
+        )
+    (do
+      (print "Invalid input!")
+      (os/exit))))
+
+
+(defn main
+  [& args]
+
+  (defn find-flag
+    [short-flag
+     long-flag]
+    (find args
+          (fn [arg]
+            (or (= short-flag arg)
+                (= long-flag arg)))
+          false))
+
+  (defn find-value
+    [arg & dflt-value]
+
+    (let [index (find-index args |(= $ arg))
+          value (-> index
+                    inc
+                    (|(get args $)))]
+      (default value dflt-value)))
+
+  (cond
+    (find-flag "-h" "--help")
+    (dispatch :help)
+
+    (find-flag "-i" "--interactive")
+    (dispatch :interactive)
+
+    (find-flag "-c" "--convert")
+    (dispatch :convert)
+
+
+
+    (dispatch :invalid)))
