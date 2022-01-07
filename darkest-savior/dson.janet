@@ -676,7 +676,49 @@
   (map |(put $ :__parent-field-index nil)
        partial-transformed-fields)
 
-  (partial-transformed-fields 0))
+  (put (partial-transformed-fields 0)
+       :__revision (get-in dson-data [:header :revision])))
+
+
+(defn table->data
+  ```
+  Turn a table into DSON data. The table should come from `data->table` or at
+  least have a `:__revision` ready.
+  ```
+  [tbl-with-revision]
+
+  (def tbl
+    (->> tbl-with-revision
+         pairs
+         (filter
+           (fn [[key value]] (not= key :__revision)))))
+
+  (def revision
+    (tbl-with-revision :__revision))
+
+  (def header
+    (table
+      :magic-number "\x01\xB1\0\0"
+      :revision revision
+      :zeroes "\0\0\0\0"
+      :meta-1-size 0
+      :num-meta-1-entries (->> tbl
+                               (count (fn [[_ value]]
+                                         (or (table? value)
+                                             (struct? value)))))
+      :meta-1-offset 0
+      :zeroes-2 "\0\0\0\0\0\0\0\0"
+      :zeroes-3 "\0\0\0\0\0\0\0\0"
+      :num-meta-2-entries (-> tbl
+                              pairs
+                              length)
+      :meta-2-offset 0
+      :zeroes-4 "\0\0\0\0"
+      :data-length 0
+      :data-offset 0
+      ))
+
+  {:header header})
 
 
 (defn read-dson-file
