@@ -30,6 +30,14 @@
        file-names))
 
 
+(defn all-true?
+  ```
+  Check if every values within `xs` are truthy.
+  ```
+  [xs]
+  (all |(= true $) xs))
+
+
 (defn test-path
   [path]
   (let [dson-data (-> path
@@ -58,12 +66,57 @@
         sum
         (= 64)
         assert)
+
+    # make sure that the data types are correct
+    # (-> dson-data
+    #     (get :fields)
+    #     (|(map
+    #         (fn [field]
+    #           (let [data-type (get-in field [:inferences :data-type])
+    #                 data      (get-in field [:inferences :data])]
+    #             (and (not= data-type :unknown)
+    #                  (case data-type
+    #                    :char (-> data length (= 1))
+    #                    :float (number? data)
+    #                    :int-vector (->> data
+    #                                     (map number?)
+    #                                     all-truthy?)
+    #                    :string-vector (->> data
+    #                                        (map string?)
+    #                                        all-truthy?)
+    #                    :float-vector (->> data
+    #                                       (map number?)
+    #                                       all-truthy?)
+    #                    :two-int (and (-> data
+    #                                      length
+    #                                      (= 2))
+    #                                  (number? (data 0))
+    #                                  (number? (data 1)))
+    #                    :bool (boolean? data)
+    #                    :two-bool (and (-> data
+    #                                       length
+    #                                       (= 2))
+    #                                   (number? (data 0))
+    #                                   (number? (data 1)))
+    #                    :int (or (number? data)
+    #                             (-> data
+    #                                 string?
+    #                                 (|(if $
+    #                                     (string/has-prefix? "###" $)))))
+    #                    :file true
+    #                    :string (string? data)
+    #                    false))))
+    #         $))
+    #     all-true?)
     ))
 
-(map test-path paths)
+(zipcoll paths
+         (map test-path paths))
 
-(test-path (paths 1))
 
-(map length ["one two" "three four"])
+# (->> (-> (paths 1)
+#          dson/read-file-bytes
+#          dson/decode-bytes)
+#      (string/format "%p")
+#      (spit "/tmp/test.janet"))
 
-(protect (+ 1 1))
