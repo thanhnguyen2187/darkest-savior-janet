@@ -112,6 +112,9 @@
     - `data-offset`
     ```
     []
+    # `(table ...)` is used instead of `@{}` since
+    # `(table ...)` preserve the calling order of `(read-raw)`,
+    # while `@{}` does not
     (table
      :magic-number       (read-raw 4)
      :revision           (read-raw 4)
@@ -634,6 +637,9 @@
 
 
 (defn data->table
+  ```
+  Turn structured DSON data into a table for later JSON encoding.
+  ```
   [dson-data]
 
   (def fields (dson-data :fields))
@@ -672,19 +678,10 @@
 
   (partial-transformed-fields 0))
 
-(-> (paths 2)
-     read-file-bytes
-     decode-bytes
-     (strip-meta-1-blocks 3)
-     (strip-meta-2-blocks 3)
-     (strip-fields 3)
-     # (|(get $ :fields))
-     # (fields->table)
-     # (string/format "%p")
-     # (json/encode)
-     # (spit "/tmp/test-2.janet")
-     # (|(spit (string/join ["/tmp" (paths 2)]
-     #                      "/")
-     #         $))
-     protect)
+
+(defn read-dson-file
+  [path]
+  (-> path
+      dson/read-file-bytes
+      dson/decode-bytes))
 
