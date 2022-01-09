@@ -1,5 +1,6 @@
 (use ./zip)
 (use ./skip)
+(use ./flatten-recur)
 (use ./bit-utils)
 
 (import ./fake-file)
@@ -652,10 +653,11 @@
             is-file            (= data-type :file)
             parent-field-index (get-in field [:inferences :parent-field-index])]
         @{field-name            (cond
-                                  is-object @{}
+                                  is-object @{:__order @[]}
+                                  # is-object @{}
                                   is-file (-> data
                                               (get :fields)
-                                              fields->table)
+                                              data->table)
                                   data)
           :__parent-field-index parent-field-index})))
 
@@ -666,11 +668,22 @@
                   (put $ :__parent-field-index nil)
                   parent-field-index))
               (|(get partial-transformed-fields $))
-              (|(merge-into (-?> $
-                                 keys
-                                 first
-                                 $)
-                            partial-transformed-field))))
+              ((fn [parent-field]
+                 (do
+                   (merge-into parent-field
+                               (->> partial-transformed-field
+                                    pairs
+                                    (filter (fn [[key value]]
+                                              (->> key
+                                                   (string/has-prefix? "__")
+                                                   not)))
+                                    from-pairs))
+                   # (-> $
+                   #     (get :__order)
+                   #     (array/push
+                   #       (get partial-transformed-field :field-name)))
+                   )))
+              ))
        partial-transformed-fields)
 
   (map |(put $ :__parent-field-index nil)
@@ -691,7 +704,9 @@
     (->> tbl-with-revision
          pairs
          (filter
-           (fn [[key value]] (not= key :__revision)))))
+           (fn [[key value]] (not= key :__revision)))
+         from-pairs
+         flatten-recur))
 
   (def revision
     (tbl-with-revision :__revision))
@@ -700,18 +715,14 @@
     (table
       :magic-number "\x01\xB1\0\0"
       :revision revision
+      :header-length 64
       :zeroes "\0\0\0\0"
       :meta-1-size 0
-      :num-meta-1-entries (->> tbl
-                               (count (fn [[_ value]]
-                                         (or (table? value)
-                                             (struct? value)))))
+      :num-meta-1-entries 0
       :meta-1-offset 0
       :zeroes-2 "\0\0\0\0\0\0\0\0"
       :zeroes-3 "\0\0\0\0\0\0\0\0"
-      :num-meta-2-entries (-> tbl
-                              pairs
-                              length)
+      :num-meta-2-entries (length tbl)
       :meta-2-offset 0
       :zeroes-4 "\0\0\0\0"
       :data-length 0
@@ -720,10 +731,4 @@
 
   {:header header})
 
-
-(defn read-dson-file
-  [path]
-  (-> path
-      dson/read-file-bytes
-      dson/decode-bytes))
 

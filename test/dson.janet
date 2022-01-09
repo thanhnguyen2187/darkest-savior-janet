@@ -113,7 +113,6 @@
 (zipcoll paths
          (map test-path paths))
 
-
 # (->> (-> (paths 1)
 #          dson/read-file-bytes
 #          dson/decode-bytes)
