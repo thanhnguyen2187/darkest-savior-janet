@@ -37,6 +37,16 @@
     protect
     )
 
+(->> (paths 3)
+     dson/read-file-bytes
+     dson/decode-bytes
+     dson/data->table
+     (string/format "%p")
+     (spit "/tmp/test.janet")
+     protect
+     )
+
 (string/has-prefix? "two" :two)
+(spit)
 
 
