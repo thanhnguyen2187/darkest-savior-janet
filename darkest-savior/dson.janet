@@ -158,7 +158,7 @@
     ```
     Infer new data from the decoded "meta 2" block.
 
-    The block is 4-byte aligned, which means:
+    The blocks are 4-byte aligned, which means:
 
     - `8` is not touched
     - `11` gets padded `1` byte to become `12`
@@ -643,54 +643,19 @@
   ```
   [dson-data]
 
-  (def fields (dson-data :fields))
-  (def partial-transformed-fields
-    (seq [field :in fields]
-      (let [field-name         (get    field :name)
-            data-type          (get-in field [:inferences :data-type])
-            data               (get-in field [:inferences :data])
-            is-object          (get-in field [:inferences :is-object])
-            is-file            (= data-type :file)
-            parent-field-index (get-in field [:inferences :parent-field-index])]
-        @{field-name            (cond
-                                  is-object @{:__order @[]}
-                                  # is-object @{}
-                                  is-file (-> data
-                                              (get :fields)
-                                              data->table)
-                                  data)
-          :__parent-field-index parent-field-index})))
-
-  (map (fn [partial-transformed-field]
-         (-?> partial-transformed-field
-              (|(do
-                  (def parent-field-index (get $ :__parent-field-index))
-                  (put $ :__parent-field-index nil)
-                  parent-field-index))
-              (|(get partial-transformed-fields $))
-              ((fn [parent-field]
-                 (do
-                   (merge-into parent-field
-                               (->> partial-transformed-field
-                                    pairs
-                                    (filter (fn [[key value]]
-                                              (->> key
-                                                   (string/has-prefix? "__")
-                                                   not)))
-                                    from-pairs))
-                   # (-> $
-                   #     (get :__order)
-                   #     (array/push
-                   #       (get partial-transformed-field :field-name)))
-                   )))
-              ))
-       partial-transformed-fields)
-
-  (map |(put $ :__parent-field-index nil)
-       partial-transformed-fields)
-
-  (put (partial-transformed-fields 0)
-       :__revision (get-in dson-data [:header :revision])))
+  (let [fields (dson-data :fields)]
+    (map (fn [field]
+           (let [key (field :name)
+                 value (get-in field [:inferences
+                                      :data])
+                 parent-index (get-in field [:inferences
+                                             :parent-field-index])]
+             (table :key key
+                    :value value
+                    :parent-index parent-index)))
+         fields)
+    # fields
+    ))
 
 
 (defn table->data
